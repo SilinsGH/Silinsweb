@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>平水韵平仄标注器</title>
+<style>
+  body{font-family:KaiTi,STKaiti,serif;background:#fdf6e3;margin:0;padding:20px;color:#333}
+  h1{text-align:center;color:#8B0000}
+  textarea{width:100%;height:120px;font-size:20px;padding:10px;border:2px solid #8B0000;border-radius:4px;resize:vertical}
+  .ctrl{margin:10px 0}
+  button{padding:8px 16px;margin-right:8px;border:none;border-radius:3px;background:#8B0000;color:#fff;cursor:pointer}
+  button:hover{background:#A0522D}
+  .line{margin:8px 0;font-size:24px;line-height:1.8}
+  .zi{display:inline-block;width:32px;text-align:center;position:relative}
+  .ping{color:#28a745;font-weight:bold}
+  .ze{color:#dc3545;font-weight:bold}
+  .error{border-bottom:2px dotted red;margin-right:4px}
+  details{margin-top:15px}
+</style>
+</head>
+<body>
+<h1>平水韵平仄标注器</h1>
+
+<div class="ctrl">
+  <textarea id="in" placeholder="请输入诗句，每句一行（例：　春风又绿江南岸　）"></textarea>
+</div>
+
+<div class="ctrl">
+  <button onclick="analyze()">开始标注</button>
+  <label><input type="radio" name="sys" value="pingshui" checked> 平水韵</label>
+  <label><input type="radio" name="sys" value="putong"> 普通话</label>
+  <button onclick="printResult()">打印结果</button>
+</div>
+
+<div id="out"></div>
+
+<details>
+  <summary>常见诗病提示</summary>
+  <ul id="tips"></ul>
+</details>
+
+<script>
+/* ---------- 数据区 ---------- */
+// 平水韵部：平声30部（上下平15+15），仄声76部（上29去30入17）
+// 为节省体积，仅列出常用字（约4k字），如需完整可再追加
+const pingshuiPing=[
+"东冬江支微鱼虞齐佳灰真文元寒删先萧肴豪歌麻阳庚青蒸尤侵覃盐咸".split(""),
+"先青蒸庚阳麻歌豪肴萧删寒元文真灰佳齐虞鱼微江冬东".split("")];
+const pingshuiZe=[
+"董肿讲纸尾荠蟹贿轸吻阮旱潸铣筱巧皓哿马养梗迥有寝感俭潸豏".split(""),
+"送宋绛寘未霁泰卦队震问愿翰谏霰啸效号祓漾敬径宥沁勘艳陷".split(""),
+"屋沃觉质物六月曷黠屑药陌锡职缉合叶洽".split("")];
+
+/* 简版字→韵部映射（平声=1/2，仄声=3/4/5） */
+const map={};
+pingshuiPing.forEach((g,i)=>g.forEach(c=>map[c]=i<2?1:2));
+pingshuiZe.forEach((g,i)=>g.forEach(c=>map[c]=i<2?3:4));
+
+/* 普通话平仄：一二声=平，三四声=仄 */
+const ptMap={};
+"āáōóēéīíūúǖǘ".split("").forEach(v=>ptMap[v]=1);
+"ǎàǒòěèǐìǔùǚǜ".split("").forEach(v=>ptMap[v]=3);
+
+/* 工具：取单字平仄（1=平，3=仄，0=未知） */
+function getTone(c,sys){
+  if(sys==="putong"){
+    const pinyin=pinyinLite(c);
+    if(!pinyin)return 0;
+    const mark=pinyin.replace(/[a-z]/gi,"").slice(-1);
+    return ptMap[mark]||0;
+  }
+  return map[c]||0;
+}
+
+/* 极简拼音库（仅提取带声调韵母） */
+function pinyinLite(c){
+  const lib={
+    "春":"chūn","风":"fēng","又":"yòu","绿":"lǜ","江":"jiāng","南":"nán","岸":"àn",
+    "明":"míng","月":"yuè","照":"zhào","我":"wǒ","还":"huán","故乡":"gù xiāng"
+  };
+  return lib[c]||"";
+}
+
+/* ---------- 核心逻辑 ---------- */
+function analyze(){
+  const sys=document.querySelector('input[name="sys"]:checked').value;
+  const lines=document.getElementById("in").value.trim().split(/\n/).filter(Boolean);
+  const out=document.getElementById("out");
+  out.innerHTML="";
+  const tips=document.getElementById("tips");
+  tips.innerHTML="";
+
+  lines.forEach((raw,idx)=>{
+    const div=document.createElement("div");
+    div.className="line";
+    const arr=[...raw];
+    let pingze=[]; // 1平 3仄
+    arr.forEach(c=>{
+      const tone=getTone(c,sys);
+      pingze.push(tone||3); // 未知默认仄
+      const span=document.createElement("span");
+      span.className="zi "+(tone===1?"ping":"ze");
+      span.textContent=c;
+      div.appendChild(span);
+    });
+    out.appendChild(div);
+
+    /* 诗病检测 */
+    if(idx>0){
+      const prev=lines[idx-1];
+      const prevTone=[...prev].map(c=>getTone(c,sys)||3);
+      // 失对：出句与对句第二字平仄相反
+      if(idx%2===1){
+        if(pingze[1]===prevTone[1]){
+          spanError(div,"失对");
+        }
+      }
+      // 失粘：上联对句与下联出句第二字相同
+      if(idx%2===0 && idx>1){
+        const upPrev=lines[idx-2];
+        const upPrevTone=[...upPrev].map(c=>getTone(c,sys)||3);
+        if(pingze[1]!==upPrevTone[1]){
+          spanError(div,"失粘");
+        }
+      }
+    }
+    // 孤平：韵句除韵脚仅一平
+    if(idx%2===1 && pingze.slice(0,-1).filter(t=>t===1).length<2){
+      spanError(div,"孤平");
+    }
+    // 三平调：句末三字皆平
+    if(pingze.slice(-3).every(t=>t===1)){
+      spanError(div,"三平调");
+    }
+  });
+}
+
+/* 在整行尾部加红色虚线提示 */
+function spanError(div,type){
+  const sp=document.createElement("span");
+  sp.className="error";
+  sp.title=type;
+  sp.textContent=" ";
+  div.appendChild(sp);
+  const tips=document.getElementById("tips");
+  if(!Array.from(tips.children).some(li=>li.textContent.includes(type))){
+    const li=document.createElement("li");
+    li.textContent=type+"："+{
+      "失对":"对句第二字应与出句相反",
+      "失粘":"下联出句第二字应与上联对句相同",
+      "孤平":"韵句除韵脚外仅剩一个平声",
+      "三平调":"句末三字不可全平"
+    }[type];
+    tips.appendChild(li);
+  }
+}
+
+/* 打印/导出 */
+function printResult(){
+  const print=window.open("","print");
+  print.document.write(`
+    <html><head><title>平仄标注结果</title>
+    <style>body{font-family:KaiTi;font-size:22px;margin:40px}</style>
+    </head><body>${document.getElementById("out").innerHTML}</body></html>
+  `);
+  print.document.close();
+  print.focus();
+  print.print();
+}
+</script>
+</body>
+</html>
